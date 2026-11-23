@@ -33,6 +33,8 @@ type ConfigBuilder struct {
 	configBaseOverride string // absolute base set by WithConfigDir; the name is joined in Build
 	dataBaseOverride   string // absolute base set by WithDataDir; the name is joined in Build
 	configExtensions   []string
+	dirPerm            os.FileMode // 0 means DefaultDirPerm
+	filePerm           os.FileMode // 0 means DefaultFilePerm
 	autoCreate         bool
 	err                error
 }
@@ -116,6 +118,42 @@ func (b *ConfigBuilder) WithConfigExtensions(extensions ...string) *ConfigBuilde
 	return b
 }
 
+// WithDirPerm sets the mode for directories cfgly creates: the config and
+// data directories when WithAutoCreate is set, and missing parent directories
+// created by ConfigDir writes. Defaults to DefaultDirPerm (0o700). perm must
+// stay within 0o777 and include owner rwx (0o700); otherwise Build returns an
+// error wrapping ErrInvalidPerm. Existing directories are never chmod-ed, and
+// the process umask still applies.
+func (b *ConfigBuilder) WithDirPerm(perm os.FileMode) *ConfigBuilder {
+	if b.err != nil {
+		return b
+	}
+	if perm&^0o777 != 0 || perm&0o700 != 0o700 {
+		b.err = fmt.Errorf("%w: directory mode %#o must be within 0o777 and include owner rwx (0o700)", ErrInvalidPerm, uint32(perm))
+		return b
+	}
+	b.dirPerm = perm
+	return b
+}
+
+// WithFilePerm sets the mode for new files written through Config() and
+// Data() when the write call passes perm 0 (batch writes always do).
+// Defaults to DefaultFilePerm (0o600). An explicit non-zero perm argument to
+// a write method still wins. perm must stay within 0o777 and include owner
+// read/write (0o600); otherwise Build returns an error wrapping
+// ErrInvalidPerm. Existing files keep their mode.
+func (b *ConfigBuilder) WithFilePerm(perm os.FileMode) *ConfigBuilder {
+	if b.err != nil {
+		return b
+	}
+	if perm&^0o777 != 0 || perm&0o600 != 0o600 {
+		b.err = fmt.Errorf("%w: file mode %#o must be within 0o777 and include owner rw (0o600)", ErrInvalidPerm, uint32(perm))
+		return b
+	}
+	b.filePerm = perm
+	return b
+}
+
 // WithAutoCreate sets whether config and data directories should be
 // created automatically during Build. Defaults to false.
 func (b *ConfigBuilder) WithAutoCreate(create bool) *ConfigBuilder {
@@ -125,7 +163,8 @@ func (b *ConfigBuilder) WithAutoCreate(create bool) *ConfigBuilder {
 
 // Build resolves OS-specific directories and creates the final instance.
 // Returns an error if directory resolution fails (e.g., home directory inaccessible).
-// If WithAutoCreate was set, config and data directories are created before returning.
+// If WithAutoCreate was set, config and data directories are created (with
+// the WithDirPerm mode, 0o700 by default) before returning.
 //
 // Build does not modify the builder: OS-specific paths are resolved on every
 // call and each call returns a new *AppConfig that shares no mutable state
@@ -159,19 +198,28 @@ func (b *ConfigBuilder) Build() (*AppConfig, error) {
 	}
 	configPath := filepath.Join(configBase, b.name)
 
-	// Create directories if auto-create is enabled
+	dirPerm, filePerm := b.dirPerm, b.filePerm
+	if dirPerm == 0 {
+		dirPerm = DefaultDirPerm
+	}
+	if filePerm == 0 {
+		filePerm = DefaultFilePerm
+	}
+
+	// Create directories if auto-create is enabled. MkdirAll never changes
+	// the mode of directories that already exist.
 	if b.autoCreate {
-		if err := os.MkdirAll(dataPath, 0o755); err != nil {
+		if err := os.MkdirAll(dataPath, dirPerm); err != nil {
 			return nil, fmt.Errorf("create data directory: %w", err)
 		}
-		if err := os.MkdirAll(configPath, 0o755); err != nil {
+		if err := os.MkdirAll(configPath, dirPerm); err != nil {
 			return nil, fmt.Errorf("create config directory: %w", err)
 		}
 	}
 
 	return &AppConfig{
 		name:      b.name,
-		dataDir:   NewConfigDir(dataPath),
-		configDir: NewConfigDir(configPath, b.configExtensions...),
+		dataDir:   newConfigDir(dataPath, dirPerm, filePerm, nil),
+		configDir: newConfigDir(configPath, dirPerm, filePerm, b.configExtensions),
 	}, nil
 }

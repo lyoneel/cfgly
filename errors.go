@@ -12,4 +12,10 @@ var (
 	// ErrInvalidBaseDir reports an empty or relative base directory passed to
 	// ConfigBuilder.WithConfigDir or ConfigBuilder.WithDataDir.
 	ErrInvalidBaseDir = errors.New("invalid base directory")
+
+	// ErrInvalidPerm reports a permission passed to ConfigBuilder.WithDirPerm
+	// or ConfigBuilder.WithFilePerm that is zero, has bits outside 0o777, or
+	// lacks the owner bits the library needs (rwx for directories, rw for
+	// files).
+	ErrInvalidPerm = errors.New("invalid permission")
 )

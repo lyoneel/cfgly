@@ -36,24 +36,93 @@ var ErrExtensionNotAllowed = errors.New("file extension not allowed")
 // are not filtered. Files without an extension are not allowed when a filter
 // is set. With no extensions, nothing is filtered.
 //
+// Permissions: files created through a ConfigDir write method with perm 0
+// (and all batch writes) get DefaultFilePerm (0o600) unless configured
+// otherwise; an explicit non-zero perm argument is used as given. Missing
+// parent directories created by a write get DefaultDirPerm (0o700). Existing
+// files and directories are never chmod-ed, and the process umask still
+// applies.
+//
 // A ConfigDir is immutable after construction and safe for concurrent use.
 type ConfigDir struct {
 	*dirly.Directory // Embed Directory to inherit all methods
 
-	extensions []string // normalized: lower-case, no leading dot, unique
+	extensions []string    // normalized: lower-case, no leading dot, unique
+	dirPerm    os.FileMode // mode for parent directories created by writes
 }
+
+const (
+	// DefaultDirPerm is the mode used for directories cfgly creates: the
+	// config and data directories (WithAutoCreate) and missing parent
+	// directories created by ConfigDir writes. Owner-only, because config
+	// directories often hold credentials.
+	DefaultDirPerm os.FileMode = 0o700
+
+	// DefaultFilePerm is the mode for new files written through a ConfigDir
+	// with perm 0. Owner-only read/write.
+	DefaultFilePerm os.FileMode = 0o600
+)
 
 // NewConfigDir creates a ConfigDir rooted at basePath. If extensions are
 // given, only files with those extensions are visible to and accepted by the
 // ConfigDir (see ConfigDir). Extensions are case-insensitive and may be given
 // with or without the leading dot ("yaml" and ".YAML" are equivalent); empty
 // values are ignored.
+//
+// New files default to DefaultFilePerm and created parent directories to
+// DefaultDirPerm; use ConfigBuilder.WithFilePerm/WithDirPerm to change them.
 func NewConfigDir(basePath string, extensions ...string) *ConfigDir {
+	return newConfigDir(basePath, DefaultDirPerm, DefaultFilePerm, extensions)
+}
+
+func newConfigDir(basePath string, dirPerm, filePerm os.FileMode, extensions []string) *ConfigDir {
 	exts := normalizeExtensions(extensions)
 	return &ConfigDir{
-		Directory:  dirly.NewFilteredDirectory(basePath).WithExtensions(exts...).Build(),
+		Directory: dirly.NewFilteredDirectory(basePath).
+			WithExtensions(exts...).
+			WithDefaultPermissions(filePerm).
+			Build(),
 		extensions: exts,
+		dirPerm:    dirPerm,
 	}
+}
+
+// ensureParent creates the missing parent directories of filename with the
+// ConfigDir's directory mode before dirly writes the file (dirly itself would
+// create them with 0o755). The path is resolved and checked by dirly first;
+// existing directories are left untouched.
+func (d *ConfigDir) ensureParent(filename string) error {
+	if filename == "" {
+		return nil // let dirly report its own validation error
+	}
+	full, err := d.Directory.AbsPath(filename)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(full), d.dirPerm); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	return nil
+}
+
+// prepareWrite runs the extension check and parent creation for one name.
+func (d *ConfigDir) prepareWrite(filename string) error {
+	if err := d.checkExtension(filename); err != nil {
+		return err
+	}
+	return d.ensureParent(filename)
+}
+
+func prepareKeys[V any](d *ConfigDir, files map[string]V) error {
+	if err := checkKeys(d, files); err != nil {
+		return err
+	}
+	for f := range files {
+		if err := d.ensureParent(f); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // normalizeExtensions lower-cases extensions, strips one leading dot and
@@ -178,7 +247,7 @@ func (d *ConfigDir) ReadToScanner(filename string) (*os.File, *bufio.Scanner, er
 
 // WriteFromBytes writes data to a file with an allowed extension.
 func (d *ConfigDir) WriteFromBytes(filename string, data []byte, perm os.FileMode) error {
-	if err := d.checkExtension(filename); err != nil {
+	if err := d.prepareWrite(filename); err != nil {
 		return err
 	}
 	return d.Directory.WriteFromBytes(filename, data, perm)
@@ -186,7 +255,7 @@ func (d *ConfigDir) WriteFromBytes(filename string, data []byte, perm os.FileMod
 
 // WriteFromString writes s to a file with an allowed extension.
 func (d *ConfigDir) WriteFromString(filename string, s string, perm os.FileMode) error {
-	if err := d.checkExtension(filename); err != nil {
+	if err := d.prepareWrite(filename); err != nil {
 		return err
 	}
 	return d.Directory.WriteFromString(filename, s, perm)
@@ -194,7 +263,7 @@ func (d *ConfigDir) WriteFromString(filename string, s string, perm os.FileMode)
 
 // WriteFromLines writes lines to a file with an allowed extension.
 func (d *ConfigDir) WriteFromLines(filename string, lines []string, perm os.FileMode) error {
-	if err := d.checkExtension(filename); err != nil {
+	if err := d.prepareWrite(filename); err != nil {
 		return err
 	}
 	return d.Directory.WriteFromLines(filename, lines, perm)
@@ -202,7 +271,7 @@ func (d *ConfigDir) WriteFromLines(filename string, lines []string, perm os.File
 
 // WriteFromBuff writes the content of r to a file with an allowed extension.
 func (d *ConfigDir) WriteFromBuff(filename string, r *bufio.Reader, perm os.FileMode) error {
-	if err := d.checkExtension(filename); err != nil {
+	if err := d.prepareWrite(filename); err != nil {
 		return err
 	}
 	return d.Directory.WriteFromBuff(filename, r, perm)
@@ -210,7 +279,7 @@ func (d *ConfigDir) WriteFromBuff(filename string, r *bufio.Reader, perm os.File
 
 // WriteFromScanner writes the lines of s to a file with an allowed extension.
 func (d *ConfigDir) WriteFromScanner(filename string, s *bufio.Scanner, perm os.FileMode) error {
-	if err := d.checkExtension(filename); err != nil {
+	if err := d.prepareWrite(filename); err != nil {
 		return err
 	}
 	return d.Directory.WriteFromScanner(filename, s, perm)
@@ -258,7 +327,7 @@ func (d *ConfigDir) BatchReadToScanner(filenames []string) (map[string]*bufio.Sc
 
 // BatchWriteFromBytes writes several files; every name must have an allowed extension.
 func (d *ConfigDir) BatchWriteFromBytes(files map[string][]byte) error {
-	if err := checkKeys(d, files); err != nil {
+	if err := prepareKeys(d, files); err != nil {
 		return err
 	}
 	return d.Directory.BatchWriteFromBytes(files)
@@ -266,7 +335,7 @@ func (d *ConfigDir) BatchWriteFromBytes(files map[string][]byte) error {
 
 // BatchWriteFromString writes several files; every name must have an allowed extension.
 func (d *ConfigDir) BatchWriteFromString(files map[string]string) error {
-	if err := checkKeys(d, files); err != nil {
+	if err := prepareKeys(d, files); err != nil {
 		return err
 	}
 	return d.Directory.BatchWriteFromString(files)
@@ -274,7 +343,7 @@ func (d *ConfigDir) BatchWriteFromString(files map[string]string) error {
 
 // BatchWriteFromLines writes several files; every name must have an allowed extension.
 func (d *ConfigDir) BatchWriteFromLines(files map[string][]string) error {
-	if err := checkKeys(d, files); err != nil {
+	if err := prepareKeys(d, files); err != nil {
 		return err
 	}
 	return d.Directory.BatchWriteFromLines(files)
@@ -282,7 +351,7 @@ func (d *ConfigDir) BatchWriteFromLines(files map[string][]string) error {
 
 // BatchWriteFromBuff writes several files; every name must have an allowed extension.
 func (d *ConfigDir) BatchWriteFromBuff(files map[string]*bufio.Reader) error {
-	if err := checkKeys(d, files); err != nil {
+	if err := prepareKeys(d, files); err != nil {
 		return err
 	}
 	return d.Directory.BatchWriteFromBuff(files)
@@ -290,7 +359,7 @@ func (d *ConfigDir) BatchWriteFromBuff(files map[string]*bufio.Reader) error {
 
 // BatchWriteFromScanner writes several files; every name must have an allowed extension.
 func (d *ConfigDir) BatchWriteFromScanner(files map[string]*bufio.Scanner) error {
-	if err := checkKeys(d, files); err != nil {
+	if err := prepareKeys(d, files); err != nil {
 		return err
 	}
 	return d.Directory.BatchWriteFromScanner(files)
