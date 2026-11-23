@@ -23,4 +23,9 @@ var (
 	// ConfigBuilder.WithMacOSStrategy other than MacOSStrategyApple or
 	// MacOSStrategyXDG.
 	ErrInvalidMacOSStrategy = errors.New("invalid macOS strategy")
+
+	// ErrInvalidSymlinkPolicy reports a value passed to
+	// ConfigBuilder.WithSymlinkPolicy other than FollowWithinRoot, FollowAny
+	// or NoFollow.
+	ErrInvalidSymlinkPolicy = errors.New("invalid symlink policy")
 )

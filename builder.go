@@ -39,6 +39,7 @@ type ConfigBuilder struct {
 	dirPerm            os.FileMode   // 0 means DefaultDirPerm
 	filePerm           os.FileMode   // 0 means DefaultFilePerm
 	macOSStrategy      MacOSStrategy // "" means DefaultMacOSStrategy
+	symlinkPolicy      SymlinkPolicy // zero value is FollowWithinRoot (DefaultSymlinkPolicy)
 	goos               string        // "" means runtime.GOOS; set by tests only
 	autoCreate         bool
 	err                error
@@ -182,6 +183,29 @@ func (b *ConfigBuilder) WithMacOSStrategy(strategy MacOSStrategy) *ConfigBuilder
 	return b
 }
 
+// WithSymlinkPolicy sets how the config and data directories treat symlinks
+// below their root (it is passed to dirly):
+//
+//   - FollowWithinRoot (default): follow symlinks that stay inside the
+//     directory; refuse anything that resolves outside it (ErrPathEscapesRoot).
+//   - FollowAny: follow symlinks anywhere (the v1.1.0 behavior).
+//   - NoFollow: refuse any path through a symlink (ErrSymlinkNotAllowed).
+//
+// A config or data directory that is itself a symlink works under every
+// policy. Any other value makes Build return an error wrapping
+// ErrInvalidSymlinkPolicy.
+func (b *ConfigBuilder) WithSymlinkPolicy(policy SymlinkPolicy) *ConfigBuilder {
+	if b.err != nil {
+		return b
+	}
+	if !validSymlinkPolicy(policy) {
+		b.err = fmt.Errorf("%w: %v", ErrInvalidSymlinkPolicy, policy)
+		return b
+	}
+	b.symlinkPolicy = policy
+	return b
+}
+
 // WithAutoCreate sets whether config and data directories should be
 // created automatically during Build. Defaults to false.
 func (b *ConfigBuilder) WithAutoCreate(create bool) *ConfigBuilder {
@@ -256,7 +280,7 @@ func (b *ConfigBuilder) Build() (*AppConfig, error) {
 
 	return &AppConfig{
 		name:      b.name,
-		dataDir:   newConfigDir(dataPath, dirPerm, filePerm, nil),
-		configDir: newConfigDir(configPath, dirPerm, filePerm, b.configExtensions),
+		dataDir:   newConfigDir(dataPath, dirPerm, filePerm, b.symlinkPolicy, nil),
+		configDir: newConfigDir(configPath, dirPerm, filePerm, b.symlinkPolicy, b.configExtensions),
 	}, nil
 }

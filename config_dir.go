@@ -71,16 +71,20 @@ const (
 //
 // New files default to DefaultFilePerm and created parent directories to
 // DefaultDirPerm; use ConfigBuilder.WithFilePerm/WithDirPerm to change them.
+//
+// Symlinks inside the directory are handled with DefaultSymlinkPolicy
+// (FollowWithinRoot); use ConfigBuilder.WithSymlinkPolicy to change it.
 func NewConfigDir(basePath string, extensions ...string) *ConfigDir {
-	return newConfigDir(basePath, DefaultDirPerm, DefaultFilePerm, extensions)
+	return newConfigDir(basePath, DefaultDirPerm, DefaultFilePerm, DefaultSymlinkPolicy, extensions)
 }
 
-func newConfigDir(basePath string, dirPerm, filePerm os.FileMode, extensions []string) *ConfigDir {
+func newConfigDir(basePath string, dirPerm, filePerm os.FileMode, policy SymlinkPolicy, extensions []string) *ConfigDir {
 	exts := normalizeExtensions(extensions)
 	return &ConfigDir{
 		Directory: dirly.NewFilteredDirectory(basePath).
 			WithExtensions(exts...).
 			WithDefaultPermissions(filePerm).
+			WithSymlinkPolicy(policy).
 			Build(),
 		extensions: exts,
 		dirPerm:    dirPerm,
@@ -89,8 +93,11 @@ func newConfigDir(basePath string, dirPerm, filePerm os.FileMode, extensions []s
 
 // ensureParent creates the missing parent directories of filename with the
 // ConfigDir's directory mode before dirly writes the file (dirly itself would
-// create them with 0o755). The path is resolved and checked by dirly first;
-// existing directories are left untouched.
+// create them with 0o755). dirly resolves and checks the path against the
+// symlink policy first. Under FollowWithinRoot and NoFollow the
+// subdirectories are then created through an os.Root opened at the resolved
+// directory, so a symlink swapped in after the check cannot make them land
+// outside it. Existing directories are left untouched.
 func (d *ConfigDir) ensureParent(filename string) error {
 	if filename == "" {
 		return nil // let dirly report its own validation error
@@ -99,7 +106,35 @@ func (d *ConfigDir) ensureParent(filename string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), d.dirPerm); err != nil {
+	base := d.BasePath()
+	// The base directory itself is the caller's configured location.
+	if err := os.MkdirAll(base, d.dirPerm); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	dir := filepath.Dir(full)
+	if dir == base {
+		return nil
+	}
+	if d.SymlinkPolicy() == FollowAny {
+		if err := os.MkdirAll(dir, d.dirPerm); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
+		return nil
+	}
+	rel, err := filepath.Rel(base, dir)
+	if err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	rootPath, err := d.ResolvedBasePath()
+	if err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	defer root.Close()
+	if err := root.MkdirAll(rel, d.dirPerm); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 	return nil
