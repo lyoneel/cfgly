@@ -2,19 +2,21 @@
 
 All notable changes in the cfgly project are documented in this file. The format is based on Keep a Changelog, and the project follows Semantic Versioning.
 
-## v1.2.0 - Unreleased
+## v1.2.0 - 2026-11-23
 
 ### Added
 
 - `ConfigBuilder.WithMacOSStrategy(MacOSStrategy)` selects the Apple (default) or XDG directory layout on macOS; the XDG strategy honors `XDG_CONFIG_HOME` and `XDG_DATA_HOME`. `DefaultMacOSStrategy` constant
 - `ConfigBuilder.WithDirPerm(os.FileMode)` and `ConfigBuilder.WithFilePerm(os.FileMode)`, plus `DefaultDirPerm` (`0o700`) and `DefaultFilePerm` (`0o600`)
-- Sentinel errors `ErrInvalidAppName`, `ErrInvalidBaseDir`, `ErrInvalidPerm` and `ErrInvalidMacOSStrategy`
+- `ConfigBuilder.WithSymlinkPolicy(SymlinkPolicy)` passes a symlink policy to dirly for the config and data directories: `FollowWithinRoot` (default), `FollowAny` or `NoFollow`. `SymlinkPolicy`, the policy constants, `DefaultSymlinkPolicy`, `ErrPathEscapesRoot` and `ErrSymlinkNotAllowed` are re-exported from dirly
+- Sentinel errors `ErrInvalidAppName`, `ErrInvalidBaseDir`, `ErrInvalidPerm`, `ErrInvalidMacOSStrategy` and `ErrInvalidSymlinkPolicy`
 - `ConfigBuilder.WithConfigExtensions(extensions ...string)` restricts the config directory to the given file extensions
 - `ConfigDir.Extensions()` returns the allowed extensions
 - `ErrExtensionNotAllowed` sentinel error for reads and writes of disallowed files on a filtered `ConfigDir`
 
 ### Changed
 
+- Dependency on dirly moves to v1.2.0. Symlinks inside the config or data directory that resolve outside it are now refused by default (`ErrPathEscapesRoot`), writes are atomic (temp file, fsync, rename), and ownership errors are returned instead of ignored. Missing parent directories created by cfgly writes go through an `os.Root` under `FollowWithinRoot` and `NoFollow`
 - Minimum Go version is now 1.26.11 (`go.mod`); earlier 1.26.x releases have known standard-library vulnerabilities. CI pins `golang:1.26.11`
 - README no longer hard-codes a coverage percentage
 - Directories created by cfgly (`WithAutoCreate`, and missing parents created by `ConfigDir` writes) now use `0o700` instead of `0o755`. New files written with perm `0` (including batch writes) now use `0o600` instead of `0o644`. Existing files and directories are never chmod-ed
@@ -38,7 +40,8 @@ This release tightens validation and defaults. Code that relied on the old behav
 - Relative or empty override environment variables are ignored instead of being used.
 - New directories are `0700` and new files `0600`. To keep the old modes, use `WithDirPerm(0o755)` and `WithFilePerm(0o644)`.
 - A filtered `ConfigDir` now rejects reads and writes of disallowed files.
-- Go 1.26.11 or later is required.
+- Symlinks that resolve outside the config or data directory are refused by default. If your app deliberately links files there to outside locations, use `WithSymlinkPolicy(cfgly.FollowAny)`. A config directory that is itself a symlink needs no change.
+- Go 1.26.11 or later and dirly v1.2.0 are required.
 
 ## v1.1.0 - 2026-08-17
 

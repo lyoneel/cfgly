@@ -16,6 +16,7 @@ The package is a single root package with these source files:
 | `builder.go` | The `ConfigBuilder` fluent API, OS dispatch, and automatic directory creation |
 | `name.go` | App name validation (single plain path segment, Windows reserved names) |
 | `errors.go` | Exported sentinel errors returned by `Build()` |
+| `symlink.go` | `SymlinkPolicy` and related errors re-exported from dirly |
 | `config_dir.go` | The `ConfigDir` wrapper around `dirly.Directory`: extension filter and permission defaults |
 | `aux_fn.go` | OS-specific base directory resolution and environment variable overrides |
 | `*_test.go` | Resolution, override, builder, and edge-case test suites |
@@ -43,7 +44,8 @@ Dependency model:
    - Windows: `%APPDATA%` for config; `%LOCALAPPDATA%` for data, with `USERPROFILE` as the fallback.
 4. A missing home directory is an error; `Build()` wraps it and fails.
 5. With `WithAutoCreate(true)`, both directories are created via `os.MkdirAll` with the `WithDirPerm` mode (default `0o700`). Existing directories are never chmod-ed.
-6. The returned `ConfigDir`s write new files with the `WithFilePerm` mode (default `0o600`) when the caller passes perm `0`, and create missing parent directories with the directory mode before dirly writes.
+6. Both `ConfigDir`s get the `WithSymlinkPolicy` value (default `FollowWithinRoot`), which dirly enforces on every operation.
+7. The returned `ConfigDir`s write new files with the `WithFilePerm` mode (default `0o600`) when the caller passes perm `0`, and create missing parent directories with the directory mode before dirly writes.
 
 Environment variable overrides, highest precedence first. Each is used only when it holds a non-empty absolute path for the platform; empty or relative values are ignored as if unset:
 
@@ -68,6 +70,7 @@ b = b.WithConfigDir("/custom")                  // optional absolute base overri
 b = b.WithDataDir("/custom")                    // optional absolute base override (any order)
 b = b.WithMacOSStrategy(cfgly.MacOSStrategyXDG) // optional; Apple by default
 b = b.WithDirPerm(0o700).WithFilePerm(0o600)    // optional; these are the defaults
+b = b.WithSymlinkPolicy(cfgly.FollowWithinRoot) // optional; the default
 b = b.WithAutoCreate(true)                      // optional directory creation
 cfg, err := b.Build()                           // resolves, optionally creates, returns *AppConfig
 ```
