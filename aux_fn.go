@@ -6,6 +6,44 @@ import (
 	"path/filepath"
 )
 
+// envAbsPath returns the value of the environment variable key when it is a
+// non-empty absolute path for the target OS family ("windows" or any other
+// value for Unix-like systems). Empty or relative values are treated as unset,
+// as the XDG Base Directory Specification requires: "If an implementation
+// encounters a relative path in any of these variables it should consider the
+// path invalid and ignore it."
+func envAbsPath(key, goos string) (string, bool) {
+	v := os.Getenv(key)
+	if v == "" || !isAbsForOS(v, goos) {
+		return "", false
+	}
+	return v, true
+}
+
+// isAbsForOS reports whether p is an absolute path under the path rules of
+// goos. The check is explicit rather than delegating to filepath.IsAbs so the
+// result does not depend on the OS the code runs on (the Windows resolvers
+// are also exercised by tests on Linux).
+//
+// Windows: drive-letter paths with a separator ("C:\x", "C:/x") and UNC or
+// device paths ("\\server\share", "\\?\C:\x"). Drive-relative ("C:x")
+// and rooted-without-drive (`\temp`) paths are not absolute.
+// Other systems: paths starting with "/".
+func isAbsForOS(p, goos string) bool {
+	if goos != "windows" {
+		return len(p) > 0 && p[0] == '/'
+	}
+	isSep := func(c byte) bool { return c == '\\' || c == '/' }
+	if len(p) >= 3 && isDriveLetter(p[0]) && p[1] == ':' && isSep(p[2]) {
+		return true
+	}
+	return len(p) >= 3 && isSep(p[0]) && isSep(p[1]) && !isSep(p[2])
+}
+
+func isDriveLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
 // getConfigBaseForOS returns the base configuration directory for the given OS.
 func getConfigBaseForOS(goos string) (string, error) {
 	switch goos {
@@ -48,7 +86,7 @@ func getDataBaseForOS(goos string) (string, error) {
 
 // getLinuxConfigDir returns the Linux configuration directory following XDG Base Directory Specification.
 func getLinuxConfigDir() (string, error) {
-	if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
+	if xdgConfig, ok := envAbsPath("XDG_CONFIG_HOME", "linux"); ok {
 		return xdgConfig, nil
 	}
 
@@ -62,7 +100,7 @@ func getLinuxConfigDir() (string, error) {
 
 // getLinuxDataDir returns the Linux data directory following XDG Base Directory Specification.
 func getLinuxDataDir() (string, error) {
-	if xdgData := os.Getenv("XDG_DATA_HOME"); xdgData != "" {
+	if xdgData, ok := envAbsPath("XDG_DATA_HOME", "linux"); ok {
 		return xdgData, nil
 	}
 
@@ -100,11 +138,11 @@ func getMacOSDataDir(strategy MacOSStrategy) (string, error) {
 
 // getWindowsConfigDir returns the Windows configuration directory.
 func getWindowsConfigDir() (string, error) {
-	if appData := os.Getenv("APPDATA"); appData != "" {
+	if appData, ok := envAbsPath("APPDATA", "windows"); ok {
 		return appData, nil
 	}
 
-	if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
+	if userProfile, ok := envAbsPath("USERPROFILE", "windows"); ok {
 		return filepath.Join(userProfile, "AppData", "Roaming"), nil
 	}
 
@@ -113,11 +151,11 @@ func getWindowsConfigDir() (string, error) {
 
 // getWindowsDataDir returns the Windows data directory.
 func getWindowsDataDir() (string, error) {
-	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+	if localAppData, ok := envAbsPath("LOCALAPPDATA", "windows"); ok {
 		return localAppData, nil
 	}
 
-	if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
+	if userProfile, ok := envAbsPath("USERPROFILE", "windows"); ok {
 		return filepath.Join(userProfile, "AppData", "Local"), nil
 	}
 
@@ -126,7 +164,7 @@ func getWindowsDataDir() (string, error) {
 
 // getMacOSAppleConfigDir returns the traditional macOS configuration directory.
 func getMacOSAppleConfigDir() (string, error) {
-	if envDir := os.Getenv("OSDIR_MACOS_APPLE_CONFIG_HOME"); envDir != "" {
+	if envDir, ok := envAbsPath("OSDIR_MACOS_APPLE_CONFIG_HOME", "darwin"); ok {
 		return envDir, nil
 	}
 
@@ -140,7 +178,7 @@ func getMacOSAppleConfigDir() (string, error) {
 
 // getMacOSAppleDataDir returns the traditional macOS data directory.
 func getMacOSAppleDataDir() (string, error) {
-	if envDir := os.Getenv("OSDIR_MACOS_APPLE_DATA_HOME"); envDir != "" {
+	if envDir, ok := envAbsPath("OSDIR_MACOS_APPLE_DATA_HOME", "darwin"); ok {
 		return envDir, nil
 	}
 
