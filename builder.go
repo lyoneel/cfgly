@@ -43,12 +43,19 @@ func NewAppConfigBuilder() *ConfigBuilder {
 }
 
 // WithName sets the application name (required).
+//
+// The name is appended to the base directories, so it must be a single plain
+// path segment: empty, ".", "..", names containing '/', '\', ':', NUL or
+// other control characters, and Windows reserved device names (CON, NUL,
+// COM1, LPT1, ...) are rejected. Build then returns an error wrapping
+// ErrInvalidAppName. Names like "myapp", "my-app" and "com.example.app" are
+// valid.
 func (b *ConfigBuilder) WithName(name string) *ConfigBuilder {
 	if b.err != nil {
 		return b
 	}
-	if name == "" {
-		b.err = fmt.Errorf("appName cannot be empty")
+	if err := validateAppName(name); err != nil {
+		b.err = err
 		return b
 	}
 	b.name = name
@@ -95,6 +102,9 @@ func (b *ConfigBuilder) WithAutoCreate(create bool) *ConfigBuilder {
 func (b *ConfigBuilder) Build() (*AppConfig, error) {
 	if b.err != nil {
 		return nil, b.err
+	}
+	if err := validateAppName(b.name); err != nil {
+		return nil, err // WithName was never called
 	}
 
 	// Resolve data path if not explicitly set
