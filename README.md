@@ -24,7 +24,7 @@ go get gitlab.com/lyoneel/cfgly
 import "gitlab.com/lyoneel/cfgly"
 ```
 
-Requires Go 1.26 or later. The library depends on [dirly](https://gitlab.com/lyoneel/dirly) for directory operations.
+Requires Go 1.26.11 or later (the minimum in `go.mod`; earlier 1.26.x releases have known standard-library vulnerabilities). The library depends on [dirly](https://gitlab.com/lyoneel/dirly) for directory operations.
 
 ## Quick Start
 
@@ -146,7 +146,7 @@ All OS-specific defaults can be overridden via environment variables:
 
 ## Tech Stack and Dependencies
 
-- Go 1.26 or later
+- Go 1.26.11 or later
 - [dirly](https://gitlab.com/lyoneel/dirly) for directory and file operations
 - Go standard library for OS detection and environment lookup
 
