@@ -69,11 +69,11 @@ func TestBuild_DoesNotMutateBuilderOverrides(t *testing.T) {
 	if _, err := b.Build(); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if b.dataDirCustomPath != "" {
-		t.Errorf("Build cached a resolved data path in the builder: %q", b.dataDirCustomPath)
+	if b.dataBaseOverride != "" {
+		t.Errorf("Build cached a resolved data base in the builder: %q", b.dataBaseOverride)
 	}
-	if want := filepath.Join(base, "a"); b.configDirCustomPath != want {
-		t.Errorf("configDirCustomPath = %q, want %q", b.configDirCustomPath, want)
+	if b.configBaseOverride != base {
+		t.Errorf("configBaseOverride = %q, want %q", b.configBaseOverride, base)
 	}
 }
 

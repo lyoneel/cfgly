@@ -29,12 +29,12 @@ const (
 // build it from a single goroutine (the resulting *AppConfig values can be
 // shared freely).
 type ConfigBuilder struct {
-	name                string
-	configDirCustomPath string
-	dataDirCustomPath   string
-	configExtensions    []string
-	autoCreate          bool
-	err                 error
+	name               string
+	configBaseOverride string // absolute base set by WithConfigDir; the name is joined in Build
+	dataBaseOverride   string // absolute base set by WithDataDir; the name is joined in Build
+	configExtensions   []string
+	autoCreate         bool
+	err                error
 }
 
 // NewAppConfigBuilder creates a new builder for configuring an application instance.
@@ -62,16 +62,47 @@ func (b *ConfigBuilder) WithName(name string) *ConfigBuilder {
 	return b
 }
 
-// WithConfigDir sets an explicit configuration directory override.
+// WithConfigDir overrides the base directory for configuration. Build
+// appends the app name, so the config directory is dir/<name> regardless of
+// whether WithName is called before or after WithConfigDir. dir must be a
+// non-empty absolute path; otherwise Build returns an error wrapping
+// ErrInvalidBaseDir.
 func (b *ConfigBuilder) WithConfigDir(dir string) *ConfigBuilder {
-	b.configDirCustomPath = filepath.Join(dir, b.name)
+	if b.err != nil {
+		return b
+	}
+	if err := validateBaseDir("config", dir); err != nil {
+		b.err = err
+		return b
+	}
+	b.configBaseOverride = dir
 	return b
 }
 
-// WithDataDir sets an explicit data directory override.
+// WithDataDir overrides the base directory for data. Build appends the app
+// name, so the data directory is dir/<name> regardless of call order. dir
+// must be a non-empty absolute path; otherwise Build returns an error
+// wrapping ErrInvalidBaseDir.
 func (b *ConfigBuilder) WithDataDir(dir string) *ConfigBuilder {
-	b.dataDirCustomPath = filepath.Join(dir, b.name)
+	if b.err != nil {
+		return b
+	}
+	if err := validateBaseDir("data", dir); err != nil {
+		b.err = err
+		return b
+	}
+	b.dataBaseOverride = dir
 	return b
+}
+
+func validateBaseDir(kind, dir string) error {
+	if dir == "" {
+		return fmt.Errorf("%w: %s base directory cannot be empty", ErrInvalidBaseDir, kind)
+	}
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("%w: %s base directory %q must be an absolute path", ErrInvalidBaseDir, kind, dir)
+	}
+	return nil
 }
 
 // WithConfigExtensions restricts the configuration directory to files with
@@ -107,24 +138,26 @@ func (b *ConfigBuilder) Build() (*AppConfig, error) {
 		return nil, err // WithName was never called
 	}
 
-	// Resolve data path if not explicitly set
-	dataPath := b.dataDirCustomPath
-	if dataPath == "" {
+	// Resolve the data base if not explicitly set, then append the name.
+	dataBase := b.dataBaseOverride
+	if dataBase == "" {
 		base, err := getDataBaseForOS(runtime.GOOS)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine data directory: %w", err)
 		}
-		dataPath = filepath.Join(base, b.name)
+		dataBase = base
 	}
+	dataPath := filepath.Join(dataBase, b.name)
 
-	configPath := b.configDirCustomPath
-	if configPath == "" {
+	configBase := b.configBaseOverride
+	if configBase == "" {
 		base, err := getConfigBaseForOS(runtime.GOOS)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine config directory: %w", err)
 		}
-		configPath = filepath.Join(base, b.name)
+		configBase = base
 	}
+	configPath := filepath.Join(configBase, b.name)
 
 	// Create directories if auto-create is enabled
 	if b.autoCreate {
