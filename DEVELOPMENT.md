@@ -14,7 +14,10 @@ The package is a single root package with these source files:
 |------|----------------|
 | `appcfg.go` | The `AppConfig` type: name plus resolved config and data `ConfigDir` instances |
 | `builder.go` | The `ConfigBuilder` fluent API, OS dispatch, and automatic directory creation |
-| `config_dir.go` | The `ConfigDir` wrapper around `dirly.Directory` |
+| `name.go` | App name validation (single plain path segment, Windows reserved names) |
+| `errors.go` | Exported sentinel errors returned by `Build()` |
+| `symlink.go` | `SymlinkPolicy` and related errors re-exported from dirly |
+| `config_dir.go` | The `ConfigDir` wrapper around `dirly.Directory`: extension filter and permission defaults |
 | `aux_fn.go` | OS-specific base directory resolution and environment variable overrides |
 | `*_test.go` | Resolution, override, builder, and edge-case test suites |
 
@@ -32,14 +35,17 @@ Dependency model:
 
 `Build()` resolves paths in this order:
 
-1. If `WithConfigDir` or `WithDataDir` set an explicit base, that base wins and the app name is appended with `filepath.Join`.
-2. Otherwise the base comes from `getConfigBaseForOS(runtime.GOOS)` or `getDataBaseForOS(runtime.GOOS)`.
+0. The builder error, if any, is returned first; then the app name is validated (`validateAppName`).
+1. If `WithConfigDir` or `WithDataDir` set an explicit absolute base, that base wins. The setters store only the base; `Build()` appends the app name with `filepath.Join`, so call order does not matter.
+2. Otherwise the base comes from `getConfigBaseForOS(goos, strategy)` or `getDataBaseForOS(goos, strategy)`, where `strategy` is the `WithMacOSStrategy` value (default `MacOSStrategyApple`).
 3. The OS dispatch returns:
    - Linux: `$XDG_CONFIG_HOME` or `~/.config` for config; `$XDG_DATA_HOME` or `~/.local/share` for data.
-   - macOS with the Apple strategy: `~/Library/Preferences` for config; `~/Library/Application Support` for data. The XDG strategy uses the Linux paths.
+   - macOS with the Apple strategy: `~/Library/Preferences` for config; `~/Library/Application Support` for data. The XDG strategy uses the Linux resolution, including `XDG_CONFIG_HOME` and `XDG_DATA_HOME`.
    - Windows: `%APPDATA%` for config; `%LOCALAPPDATA%` for data, with `USERPROFILE` as the fallback.
 4. A missing home directory is an error; `Build()` wraps it and fails.
-5. With `WithAutoCreate(true)`, both directories are created with `0o755` permissions via `os.MkdirAll`.
+5. With `WithAutoCreate(true)`, both directories are created via `os.MkdirAll` with the `WithDirPerm` mode (default `0o700`). Existing directories are never chmod-ed.
+6. Both `ConfigDir`s get the `WithSymlinkPolicy` value (default `FollowWithinRoot`), which dirly enforces on every operation.
+7. The returned `ConfigDir`s write new files with the `WithFilePerm` mode (default `0o600`) when the caller passes perm `0`, and create missing parent directories with the directory mode before dirly writes.
 
 Environment variable overrides, highest precedence first. Each is used only when it holds a non-empty absolute path for the platform; empty or relative values are ignored as if unset:
 
@@ -59,11 +65,14 @@ The resolved paths are fixed after `Build()`. Every `Build()` call resolves path
 
 ```go
 b := cfgly.NewAppConfigBuilder()
-b = b.WithName("myapp")        // required; empty name sets the builder error
-b = b.WithConfigDir("/custom") // optional base override
-b = b.WithDataDir("/custom")   // optional base override
-b = b.WithAutoCreate(true)     // optional directory creation
-cfg, err := b.Build()          // resolves, optionally creates, returns *AppConfig
+b = b.WithName("myapp")                         // required; invalid names set the builder error
+b = b.WithConfigDir("/custom")                  // optional absolute base override (any order)
+b = b.WithDataDir("/custom")                    // optional absolute base override (any order)
+b = b.WithMacOSStrategy(cfgly.MacOSStrategyXDG) // optional; Apple by default
+b = b.WithDirPerm(0o700).WithFilePerm(0o600)    // optional; these are the defaults
+b = b.WithSymlinkPolicy(cfgly.FollowWithinRoot) // optional; the default
+b = b.WithAutoCreate(true)                      // optional directory creation
+cfg, err := b.Build()                           // resolves, optionally creates, returns *AppConfig
 ```
 
 The builder carries an internal error: the first failing step wins, and later steps keep the chainable shape. `Build()` returns that error.

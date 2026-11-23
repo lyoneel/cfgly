@@ -10,7 +10,8 @@ A standalone Go library for cross-platform application configuration, providing 
 
 - **Cross-platform** directory resolution (Linux XDG, macOS Apple/XDG, Windows APPDATA)
 - **Builder pattern** producing immutable configuration values
-- **Configurable macOS strategy** — choose between traditional Apple directories and XDG-style paths
+- **Configurable macOS strategy** — choose between traditional Apple directories and XDG-style paths with `WithMacOSStrategy`
+- **Safe defaults** — app names must be a single path segment, directories and files are created owner-only (`0700`/`0600`), and symlinks that escape the config directory are refused (`WithSymlinkPolicy`)
 - **Environment variable overrides** — all OS-specific defaults can be overridden via environment variables (absolute paths only)
 - **Instance-based API** with no global state
 
@@ -24,7 +25,7 @@ go get gitlab.com/lyoneel/cfgly
 import "gitlab.com/lyoneel/cfgly"
 ```
 
-Requires Go 1.26.11 or later (the minimum in `go.mod`; earlier 1.26.x releases have known standard-library vulnerabilities). The library depends on [dirly](https://gitlab.com/lyoneel/dirly) for directory operations.
+Requires Go 1.26.11 or later (the minimum in `go.mod`; earlier 1.26.x releases have known standard-library vulnerabilities). The library depends on [dirly](https://gitlab.com/lyoneel/dirly) v1.2.0 or later for directory operations.
 
 ## Quick Start
 
@@ -66,7 +67,7 @@ Directory resolution happens once per `Build()` call and never changes afterward
 |----------|------------------|----------------|
 | Linux | `$XDG_CONFIG_HOME/myapp` (default `~/.config/myapp`) | `$XDG_DATA_HOME/myapp` (default `~/.local/share/myapp`) |
 | macOS (Apple strategy, default) | `~/Library/Preferences/myapp` | `~/Library/Application Support/myapp` |
-| macOS (XDG strategy) | `~/.config/myapp` | `~/.local/share/myapp` |
+| macOS (XDG strategy, `WithMacOSStrategy(cfgly.MacOSStrategyXDG)`) | `$XDG_CONFIG_HOME/myapp` (default `~/.config/myapp`) | `$XDG_DATA_HOME/myapp` (default `~/.local/share/myapp`) |
 | Windows | `%APPDATA%\myapp` | `%LOCALAPPDATA%\myapp` |
 
 ## API Reference
@@ -89,12 +90,57 @@ All builder methods return the same builder instance for method chaining. Config
 
 | Method | Description |
 |--------|-------------|
-| `WithName(name string)` | Set the application name (required). Cannot be empty. |
-| `WithConfigDir(dir string)` | Override the configuration directory base path. The app name is appended automatically. |
-| `WithDataDir(dir string)` | Override the data directory base path. The app name is appended automatically. |
+| `WithName(name string)` | Set the application name (required). Must be a single plain path segment; see [App Name Rules](#app-name-rules). |
+| `WithConfigDir(dir string)` | Override the configuration base directory. Must be a non-empty absolute path. `Build()` appends the app name, so call order does not matter. |
+| `WithDataDir(dir string)` | Override the data base directory. Must be a non-empty absolute path. `Build()` appends the app name, so call order does not matter. |
+| `WithMacOSStrategy(strategy MacOSStrategy)` | Choose `MacOSStrategyApple` (default) or `MacOSStrategyXDG` on macOS. No effect on other systems. See [macOS Strategy](#macos-strategy). |
+| `WithDirPerm(perm os.FileMode)` | Mode for directories cfgly creates. Default `0o700`. Must include owner `rwx`. See [Permissions](#permissions). |
+| `WithFilePerm(perm os.FileMode)` | Default mode for new files written with perm `0`. Default `0o600`. Must include owner `rw`. |
+| `WithSymlinkPolicy(policy SymlinkPolicy)` | How the config and data directories treat symlinks inside them: `FollowWithinRoot` (default), `FollowAny`, or `NoFollow`. See [Symlinks](#symlinks). |
 | `WithConfigExtensions(extensions ...string)` | Restrict the configuration directory to files with these extensions (case-insensitive, leading dot optional). Each call replaces the previous set; no arguments removes the filter. The data directory is never filtered. See [Extension Filtering](#extension-filtering). |
 | `WithAutoCreate(create bool)` | Create config and data directories during `Build()`. Defaults to false. |
-| `Build() (*AppConfig, error)` | Resolve OS-specific directories and create the final instance. Returns an error if directory resolution fails (e.g., home directory inaccessible). |
+| `Build() (*AppConfig, error)` | Resolve OS-specific directories and create the final instance. Returns the first builder error (invalid name, base directory, permission or strategy), or an error if directory resolution or creation fails. |
+
+### App Name Rules
+
+The app name is appended to the base directories, so it must be a single plain path segment. `WithName` (and `Build()` when no name was set) rejects, with an error wrapping `cfgly.ErrInvalidAppName`:
+
+- an empty name, `.` and `..`;
+- names containing `/` or `\`;
+- names containing `:` (Windows drive letters such as `C:` and NTFS stream syntax);
+- NUL and other control characters;
+- Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, ...), case-insensitively and with or without an extension (`nul.txt`). These are rejected on every OS so a name that works on one platform works on all.
+
+Names such as `myapp`, `my-app`, `my app` and `com.example.app` are valid.
+
+### Permissions
+
+Config directories often hold credentials, so cfgly creates everything owner-only by default:
+
+- Directories created by `WithAutoCreate(true)`, and missing parent directories created by a `ConfigDir` write, use `0o700` (`cfgly.DefaultDirPerm`), or the mode set with `WithDirPerm`.
+- New files written with perm `0`, including all batch writes, use `0o600` (`cfgly.DefaultFilePerm`), or the mode set with `WithFilePerm`. A non-zero perm passed to a write method is used as given.
+- Existing directories and files are never chmod-ed, so their modes stay as they are. The process umask still applies.
+
+`NewConfigDir` uses the same defaults.
+
+### Symlinks
+
+cfgly passes a symlink policy to dirly (v1.2.0+) for both the config and data directories. Set it with `WithSymlinkPolicy`; the type and constants are re-exported from dirly, so no extra import is needed:
+
+| Policy | Behavior |
+|--------|----------|
+| `cfgly.FollowWithinRoot` (default) | Follow symlinks that stay inside the directory. Any read, write, `Exists` or other operation whose resolved target lands outside it is refused with an error wrapping `cfgly.ErrPathEscapesRoot`. |
+| `cfgly.FollowAny` | Follow symlinks anywhere (the v1.1.0 behavior). Use only if your app deliberately links config files to locations outside the directory. |
+| `cfgly.NoFollow` | Refuse any path that goes through a symlink (`cfgly.ErrSymlinkNotAllowed`). |
+
+A config or data directory that is itself a symlink (for example `~/.config/myapp -> ~/Sync/myapp`) works under every policy; its real location becomes the boundary. Missing parent directories created by writes are made through an `os.Root` at that location under `FollowWithinRoot` and `NoFollow`. Writes are atomic (temp file plus rename, done by dirly). Any other policy value makes `Build()` fail with `cfgly.ErrInvalidSymlinkPolicy`.
+
+```go
+cfg, err := cfgly.NewAppConfigBuilder().
+    WithName("myapp").
+    WithSymlinkPolicy(cfgly.NoFollow).
+    Build()
+```
 
 ### AppConfig Methods
 
@@ -145,8 +191,17 @@ macOS supports two directory resolution strategies:
 
 | Strategy | Config Dir | Data Dir |
 |----------|-----------|----------|
-| `MacOSStrategyApple` (default) | `~/Library/Preferences/appName` | `~/Library/Application Support/appName` |
-| `MacOSStrategyXDG` | `~/.config/appName` | `~/.local/share/appName` |
+| `MacOSStrategyApple` (default) | `~/Library/Preferences/appName` (override base: `OSDIR_MACOS_APPLE_CONFIG_HOME`) | `~/Library/Application Support/appName` (override base: `OSDIR_MACOS_APPLE_DATA_HOME`) |
+| `MacOSStrategyXDG` | `$XDG_CONFIG_HOME/appName` (default `~/.config/appName`) | `$XDG_DATA_HOME/appName` (default `~/.local/share/appName`) |
+
+Select the strategy with `WithMacOSStrategy`; any other value makes `Build()` fail with `cfgly.ErrInvalidMacOSStrategy`:
+
+```go
+cfg, err := cfgly.NewAppConfigBuilder().
+    WithName("myapp").
+    WithMacOSStrategy(cfgly.MacOSStrategyXDG).
+    Build()
+```
 
 ### Environment Variable Overrides
 
@@ -154,22 +209,22 @@ All OS-specific defaults can be overridden via environment variables. A value is
 
 | Variable | Description |
 |----------|-------------|
-| `XDG_CONFIG_HOME` | Override Linux/macOS XDG config base directory |
-| `XDG_DATA_HOME` | Override Linux/macOS XDG data base directory |
+| `XDG_CONFIG_HOME` | Override XDG config base directory (Linux, and macOS with `MacOSStrategyXDG`) |
+| `XDG_DATA_HOME` | Override XDG data base directory (Linux, and macOS with `MacOSStrategyXDG`) |
 | `APPDATA` | Override Windows config base directory |
 | `LOCALAPPDATA` | Override Windows data base directory |
 | `USERPROFILE` | Fallback for Windows directories |
-| `OSDIR_MACOS_APPLE_CONFIG_HOME` | Override macOS Apple config base directory |
-| `OSDIR_MACOS_APPLE_DATA_HOME` | Override macOS Apple data base directory |
+| `OSDIR_MACOS_APPLE_CONFIG_HOME` | Override macOS Apple config base directory (`MacOSStrategyApple`) |
+| `OSDIR_MACOS_APPLE_DATA_HOME` | Override macOS Apple data base directory (`MacOSStrategyApple`) |
 
 ## Error Handling
 
-`Build()` returns an error when the home directory is inaccessible, when the app name is empty, or when automatic directory creation fails. The error wraps the underlying cause with `fmt.Errorf` and `%w`, so callers can inspect it with `errors.Is` and `errors.As`. Read and write operations return the errors from the underlying dirly operations unchanged, except that on a filtered `ConfigDir` a disallowed file name returns an error wrapping `ErrExtensionNotAllowed`.
+`Build()` returns an error when the app name is missing or invalid (`ErrInvalidAppName`), a base directory passed to `WithConfigDir`/`WithDataDir` is empty or relative (`ErrInvalidBaseDir`), a mode passed to `WithDirPerm`/`WithFilePerm` is invalid (`ErrInvalidPerm`), the macOS strategy is unknown (`ErrInvalidMacOSStrategy`), the symlink policy is unknown (`ErrInvalidSymlinkPolicy`), the home directory is inaccessible, or automatic directory creation fails. The builder keeps the first error and later setters do not clear it. Errors wrap the underlying cause with `fmt.Errorf` and `%w`, so callers can inspect them with `errors.Is` and `errors.As`. Read and write operations return the errors from the underlying dirly operations unchanged (including `ErrPathEscapesRoot` and `ErrSymlinkNotAllowed` from the symlink policy), except that on a filtered `ConfigDir` a disallowed file name returns an error wrapping `ErrExtensionNotAllowed`.
 
 ## Tech Stack and Dependencies
 
 - Go 1.26.11 or later
-- [dirly](https://gitlab.com/lyoneel/dirly) for directory and file operations
+- [dirly](https://gitlab.com/lyoneel/dirly) v1.2.0 for directory and file operations (symlink policy, atomic writes)
 - Go standard library for OS detection and environment lookup
 
 ## Extensibility

@@ -40,6 +40,9 @@ go test ./...
 | `appcfg.go` | The `AppConfig` type and its accessors |
 | `builder.go` | The `ConfigBuilder` fluent construction API |
 | `config_dir.go` | The `ConfigDir` wrapper around `dirly.Directory` |
+| `name.go` | App name validation |
+| `errors.go` | Exported sentinel errors |
+| `symlink.go` | Symlink policy re-exports |
 | `aux_fn.go` | OS-specific base directory resolution and env var overrides |
 | `*_test.go` | Resolution, override, builder, and edge-case tests |
 

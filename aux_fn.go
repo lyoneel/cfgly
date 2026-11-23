@@ -44,14 +44,14 @@ func isDriveLetter(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
-// getConfigBaseForOS returns the base configuration directory for the given OS.
-func getConfigBaseForOS(goos string) (string, error) {
+// getConfigBaseForOS returns the base configuration directory for the given
+// OS. strategy selects the macOS layout and is ignored on other systems.
+func getConfigBaseForOS(goos string, strategy MacOSStrategy) (string, error) {
 	switch goos {
 	case "linux":
 		return getLinuxConfigDir()
 	case "darwin":
-		// TODO: make MacOSStrategy configurable at dispatcher level when macOS strategy becomes user-configurable
-		return getMacOSConfigDir(MacOSStrategyApple)
+		return getMacOSConfigDir(strategy)
 	case "windows":
 		return getWindowsConfigDir()
 	default:
@@ -65,13 +65,13 @@ func getConfigBaseForOS(goos string) (string, error) {
 }
 
 // getDataBaseForOS returns the base data directory for the given OS.
-func getDataBaseForOS(goos string) (string, error) {
+// strategy selects the macOS layout and is ignored on other systems.
+func getDataBaseForOS(goos string, strategy MacOSStrategy) (string, error) {
 	switch goos {
 	case "linux":
 		return getLinuxDataDir()
 	case "darwin":
-		// macOS: configurable strategy
-		return getMacOSDataDir(MacOSStrategyApple)
+		return getMacOSDataDir(strategy)
 	case "windows":
 		return getWindowsDataDir()
 	default:

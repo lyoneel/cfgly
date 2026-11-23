@@ -61,7 +61,7 @@ func TestGetConfigBaseForOS(t *testing.T) {
 				}
 			}()
 
-			got, err := getConfigBaseForOS(tt.goos)
+			got, err := getConfigBaseForOS(tt.goos, MacOSStrategyApple)
 			if err != nil {
 				t.Fatalf("getConfigBaseForOS(%q) error = %v", tt.goos, err)
 			}
@@ -129,7 +129,7 @@ func TestGetDataBaseForOS(t *testing.T) {
 				}
 			}()
 
-			got, err := getDataBaseForOS(tt.goos)
+			got, err := getDataBaseForOS(tt.goos, MacOSStrategyApple)
 			if err != nil {
 				t.Fatalf("getDataBaseForOS(%q) error = %v", tt.goos, err)
 			}
@@ -191,7 +191,7 @@ func TestGetConfigBaseForOS_UnknownOS(t *testing.T) {
 		t.Skipf("cannot determine home dir: %v", err)
 	}
 
-	got, err := getConfigBaseForOS("unknown")
+	got, err := getConfigBaseForOS("unknown", MacOSStrategyApple)
 	if err != nil {
 		t.Fatalf("getConfigBaseForOS(\"unknown\") error = %v", err)
 	}
@@ -207,7 +207,7 @@ func TestGetDataBaseForOS_UnknownOS(t *testing.T) {
 		t.Skipf("cannot determine home dir: %v", err)
 	}
 
-	got, err := getDataBaseForOS("unknown")
+	got, err := getDataBaseForOS("unknown", MacOSStrategyApple)
 	if err != nil {
 		t.Fatalf("getDataBaseForOS(\"unknown\") error = %v", err)
 	}
