@@ -12,7 +12,7 @@ This project keeps collaboration practical and respectful. Treat maintainers and
 
 ## Development Environment Setup
 
-1. Install Go 1.26 or later. Check with `go version`.
+1. Install Go 1.26.11 or later. Check with `go version`.
 2. Clone the repository. The module depends on dirly, its sibling library:
 
 ```bash
@@ -50,7 +50,7 @@ go test ./...
 3. Keep the public API stable within a major version. Breaking changes require a major version bump and a CHANGELOG entry.
 4. Document every exported symbol with a doc comment that starts with the symbol name.
 5. Wrap errors with `%w` so callers can use `errors.Is` and `errors.As`.
-6. Keep the resolved paths immutable after `Build()`. Re-resolution requires a new builder.
+6. Keep the resolved paths immutable after `Build()`. `Build()` must not modify the builder and must return a new `AppConfig` on every call.
 
 ## Testing Requirements
 

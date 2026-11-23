@@ -10,6 +10,9 @@
 package cfgly
 
 // AppConfig represents an application configuration with OS-specific configuration and data directories.
+//
+// An AppConfig is immutable once returned by ConfigBuilder.Build: its fields
+// are never modified afterwards, so all methods are safe for concurrent use.
 type AppConfig struct {
 	name      string
 	dataDir   *ConfigDir

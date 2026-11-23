@@ -41,7 +41,7 @@ Dependency model:
 4. A missing home directory is an error; `Build()` wraps it and fails.
 5. With `WithAutoCreate(true)`, both directories are created with `0o755` permissions via `os.MkdirAll`.
 
-Environment variable overrides, highest precedence first:
+Environment variable overrides, highest precedence first. Each is used only when it holds a non-empty absolute path for the platform; empty or relative values are ignored as if unset:
 
 | Variable | Affects |
 |----------|---------|
@@ -53,7 +53,7 @@ Environment variable overrides, highest precedence first:
 | `LOCALAPPDATA` | Windows data base |
 | `USERPROFILE` | Windows fallback for both bases |
 
-The resolved paths are fixed after `Build()`. Re-resolving requires a new builder.
+The resolved paths are fixed after `Build()`. Every `Build()` call resolves paths again and returns a new, independent `AppConfig`; the builder is never modified by `Build()`. The builder is not safe for concurrent use.
 
 ## Builder Flow
 
@@ -71,7 +71,7 @@ The builder carries an internal error: the first failing step wins, and later st
 ## Extension Points
 
 - Wrap `AppConfig` for application-level settings.
-- Use `NewConfigDir(basePath, extensions...)` to build a config directory that filters by extension through dirly.
+- Use `NewConfigDir(basePath, extensions...)` or `WithConfigExtensions(...)` to build a config directory that filters by extension. Listing, `Exists`, reads, and writes all honor the filter; disallowed names return `ErrExtensionNotAllowed`.
 - Add builder options by setting a field on `ConfigBuilder`, returning the builder, and applying the value inside `Build()`. Follow the existing `WithAutoCreate` pattern.
 - New platforms need a case in the OS dispatch functions in `aux_fn.go` plus table-driven tests in `aux_fn_test.go`.
 
