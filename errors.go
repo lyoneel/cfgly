@@ -18,4 +18,9 @@ var (
 	// lacks the owner bits the library needs (rwx for directories, rw for
 	// files).
 	ErrInvalidPerm = errors.New("invalid permission")
+
+	// ErrInvalidMacOSStrategy reports a value passed to
+	// ConfigBuilder.WithMacOSStrategy other than MacOSStrategyApple or
+	// MacOSStrategyXDG.
+	ErrInvalidMacOSStrategy = errors.New("invalid macOS strategy")
 )

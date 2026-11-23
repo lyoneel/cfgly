@@ -21,6 +21,9 @@ const (
 	MacOSStrategyApple MacOSStrategy = "apple"
 )
 
+// DefaultMacOSStrategy is the strategy used when WithMacOSStrategy is not called.
+const DefaultMacOSStrategy = MacOSStrategyApple
+
 // ConfigBuilder provides a fluent API for constructing AppConfig instances.
 //
 // Every call to Build returns a new, independent *AppConfig: changing or
@@ -33,8 +36,10 @@ type ConfigBuilder struct {
 	configBaseOverride string // absolute base set by WithConfigDir; the name is joined in Build
 	dataBaseOverride   string // absolute base set by WithDataDir; the name is joined in Build
 	configExtensions   []string
-	dirPerm            os.FileMode // 0 means DefaultDirPerm
-	filePerm           os.FileMode // 0 means DefaultFilePerm
+	dirPerm            os.FileMode   // 0 means DefaultDirPerm
+	filePerm           os.FileMode   // 0 means DefaultFilePerm
+	macOSStrategy      MacOSStrategy // "" means DefaultMacOSStrategy
+	goos               string        // "" means runtime.GOOS; set by tests only
 	autoCreate         bool
 	err                error
 }
@@ -154,6 +159,29 @@ func (b *ConfigBuilder) WithFilePerm(perm os.FileMode) *ConfigBuilder {
 	return b
 }
 
+// WithMacOSStrategy selects how directories are resolved on macOS:
+//
+//   - MacOSStrategyApple (default): ~/Library/Preferences/<name> and
+//     ~/Library/Application Support/<name>, overridable with
+//     OSDIR_MACOS_APPLE_CONFIG_HOME and OSDIR_MACOS_APPLE_DATA_HOME.
+//   - MacOSStrategyXDG: ~/.config/<name> and ~/.local/share/<name>, honoring
+//     XDG_CONFIG_HOME and XDG_DATA_HOME exactly as on Linux.
+//
+// It has no effect on other operating systems. Any other value makes Build
+// return an error wrapping ErrInvalidMacOSStrategy.
+func (b *ConfigBuilder) WithMacOSStrategy(strategy MacOSStrategy) *ConfigBuilder {
+	if b.err != nil {
+		return b
+	}
+	switch strategy {
+	case MacOSStrategyApple, MacOSStrategyXDG:
+		b.macOSStrategy = strategy
+	default:
+		b.err = fmt.Errorf("%w: %q (want %q or %q)", ErrInvalidMacOSStrategy, strategy, MacOSStrategyApple, MacOSStrategyXDG)
+	}
+	return b
+}
+
 // WithAutoCreate sets whether config and data directories should be
 // created automatically during Build. Defaults to false.
 func (b *ConfigBuilder) WithAutoCreate(create bool) *ConfigBuilder {
@@ -177,10 +205,19 @@ func (b *ConfigBuilder) Build() (*AppConfig, error) {
 		return nil, err // WithName was never called
 	}
 
+	strategy := b.macOSStrategy
+	if strategy == "" {
+		strategy = DefaultMacOSStrategy
+	}
+	goos := b.goos
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+
 	// Resolve the data base if not explicitly set, then append the name.
 	dataBase := b.dataBaseOverride
 	if dataBase == "" {
-		base, err := getDataBaseForOS(runtime.GOOS)
+		base, err := getDataBaseForOS(goos, strategy)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine data directory: %w", err)
 		}
@@ -190,7 +227,7 @@ func (b *ConfigBuilder) Build() (*AppConfig, error) {
 
 	configBase := b.configBaseOverride
 	if configBase == "" {
-		base, err := getConfigBaseForOS(runtime.GOOS)
+		base, err := getConfigBaseForOS(goos, strategy)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine config directory: %w", err)
 		}
