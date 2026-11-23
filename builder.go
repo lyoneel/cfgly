@@ -32,6 +32,7 @@ type ConfigBuilder struct {
 	name                string
 	configDirCustomPath string
 	dataDirCustomPath   string
+	configExtensions    []string
 	autoCreate          bool
 	err                 error
 }
@@ -63,6 +64,17 @@ func (b *ConfigBuilder) WithConfigDir(dir string) *ConfigBuilder {
 // WithDataDir sets an explicit data directory override.
 func (b *ConfigBuilder) WithDataDir(dir string) *ConfigBuilder {
 	b.dataDirCustomPath = filepath.Join(dir, b.name)
+	return b
+}
+
+// WithConfigExtensions restricts the configuration directory to files with
+// the given extensions (case-insensitive, with or without a leading dot, e.g.
+// "yaml", ".json"). Reads and writes of other files through Config() fail
+// with ErrExtensionNotAllowed, Exists reports false for them, and listing and
+// glob search skip them. Each call replaces the previous set; calling it with
+// no arguments removes the filter. The data directory is never filtered.
+func (b *ConfigBuilder) WithConfigExtensions(extensions ...string) *ConfigBuilder {
+	b.configExtensions = normalizeExtensions(extensions)
 	return b
 }
 
@@ -117,6 +129,6 @@ func (b *ConfigBuilder) Build() (*AppConfig, error) {
 	return &AppConfig{
 		name:      b.name,
 		dataDir:   NewConfigDir(dataPath),
-		configDir: NewConfigDir(configPath),
+		configDir: NewConfigDir(configPath, b.configExtensions...),
 	}, nil
 }
